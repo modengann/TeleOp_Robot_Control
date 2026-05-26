@@ -17,6 +17,22 @@ unsigned long lastStateTime = 0;
 static WiFiClient sseClients[3];
 static const int SSE_SLOTS = 3;
 
+#define SSE_QUEUE_SIZE 20
+static String sseQueue[SSE_QUEUE_SIZE];
+static int sseQueueHead = 0;
+static int sseQueueTail = 0;
+static int sseQueueCount = 0;
+
+static void enqueueSSE(const String& msg) {
+  if (sseQueueCount == SSE_QUEUE_SIZE) {
+    sseQueueHead = (sseQueueHead + 1) % SSE_QUEUE_SIZE;
+    sseQueueCount--;
+  }
+  sseQueue[sseQueueTail] = msg;
+  sseQueueTail = (sseQueueTail + 1) % SSE_QUEUE_SIZE;
+  sseQueueCount++;
+}
+
 const char PAGE[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -678,8 +694,8 @@ static void sseWritePlot(const char* label, float value) {
   }
 }
 
-void webPrint(String msg)        { Serial.print(msg);   sseWrite(msg); }
-void webPrintLn(String msg)      { Serial.println(msg); sseWrite(msg); }
+void webPrint(String msg)        { Serial.print(msg);   enqueueSSE(msg); }
+void webPrintLn(String msg)      { Serial.println(msg); enqueueSSE(msg); }
 void webPrintLn()                { Serial.println();    }
 
 void webPrint(const char* msg)   { webPrint(String(msg)); }
@@ -715,5 +731,12 @@ void setupWebServer() {
 
 void handleWebServer() {
   server.handleClient();
+  static unsigned long lastDrain = 0;
+  if (sseQueueCount > 0 && millis() - lastDrain >= 50) {
+    lastDrain = millis();
+    sseWrite(sseQueue[sseQueueHead]);
+    sseQueueHead = (sseQueueHead + 1) % SSE_QUEUE_SIZE;
+    sseQueueCount--;
+  }
   if (lastStateTime > 0 && millis() - lastStateTime > 1000) keyboard = {};
 }
