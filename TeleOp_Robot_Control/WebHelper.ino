@@ -17,6 +17,25 @@ unsigned long lastStateTime = 0;
 static WiFiClient sseClients[3];
 static const int SSE_SLOTS = 3;
 
+#define SSE_QUEUE_SIZE 20
+static String sseQueue[SSE_QUEUE_SIZE];
+static int sseQueueHead = 0;
+static int sseQueueTail = 0;
+static int sseQueueCount = 0;
+
+static void enqueueSSE(const String& msg) {
+  static unsigned long lastEnqueue = 0;
+  if (millis() - lastEnqueue < 50) return;
+  lastEnqueue = millis();
+  if (sseQueueCount == SSE_QUEUE_SIZE) {
+    sseQueueHead = (sseQueueHead + 1) % SSE_QUEUE_SIZE;
+    sseQueueCount--;
+  }
+  sseQueue[sseQueueTail] = msg;
+  sseQueueTail = (sseQueueTail + 1) % SSE_QUEUE_SIZE;
+  sseQueueCount++;
+}
+
 const char PAGE[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
@@ -170,6 +189,22 @@ const char PAGE[] PROGMEM = R"rawliteral(
       font-weight: 700;
     }
 
+    #clearBtn {
+      font-family: inherit;
+      font-size: 0.65rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      background: #7f7;
+      border: 1px solid #7f7;
+      border-radius: 4px;
+      padding: 0.3rem 0.8rem;
+      cursor: pointer;
+      color: #0f0f0f;
+      font-weight: 700;
+      transition: opacity 0.15s;
+    }
+    #clearBtn:hover { opacity: 0.8; }
+
     /* ── monitor tab content ── */
     #monitor-content {
       flex: 1;
@@ -243,6 +278,7 @@ const char PAGE[] PROGMEM = R"rawliteral(
           <button class="tab-btn"        id="tabPlotter">plotter</button>
         </div>
         <button id="resumeBtn">Resume</button>
+        <button id="clearBtn">Clear</button>
       </div>
 
       <div id="monitor-content">
@@ -262,6 +298,7 @@ const char PAGE[] PROGMEM = R"rawliteral(
     const status    = document.getElementById('status');
     const log       = document.getElementById('log');
     const resumeBtn = document.getElementById('resumeBtn');
+    const clearBtn  = document.getElementById('clearBtn');
 
     function addLog(key) {
       const entry = document.createElement('div');
@@ -323,13 +360,16 @@ const char PAGE[] PROGMEM = R"rawliteral(
       if (heldKeys.size === 0) addLog('stop');
     });
 
-    setInterval(() => {
+    function sendState() {
       const held = [...heldKeys].join(',');
-      fetch('/state?held=' + encodeURIComponent(held)).catch(() => {
-        status.textContent = 'connection lost — refresh page';
-        display.className  = '';
-      });
-    }, 50);
+      fetch('/state?held=' + encodeURIComponent(held))
+        .catch(() => {
+          status.textContent = 'connection lost — refresh page';
+          display.className  = '';
+        })
+        .finally(() => setTimeout(sendState, 50));
+    }
+    sendState();
 
     // ── monitor ────────────────────────────────────────────────
     const monitor   = document.getElementById('monitor');
@@ -383,6 +423,19 @@ const char PAGE[] PROGMEM = R"rawliteral(
         renderWindow();
       } else {
         setPaused(true);
+      }
+    });
+
+    clearBtn.addEventListener('click', () => {
+      if (currentTab === 'monitor') {
+        allMessages.length = 0;
+        messageQueue.length = 0;
+        monitor.scrollTop = 0;
+        renderWindow();
+      } else {
+        Object.keys(series).forEach(k => delete series[k]);
+        colorCounter = 0;
+        drawPlot();
       }
     });
 
@@ -675,8 +728,8 @@ static void sseWritePlot(const char* label, float value) {
   }
 }
 
-void webPrint(String msg)        { Serial.print(msg);   sseWrite(msg); }
-void webPrintLn(String msg)      { Serial.println(msg); sseWrite(msg); }
+void webPrint(String msg)        { Serial.print(msg);   enqueueSSE(msg); }
+void webPrintLn(String msg)      { Serial.println(msg); enqueueSSE(msg); }
 void webPrintLn()                { Serial.println();    }
 
 void webPrint(const char* msg)   { webPrint(String(msg)); }
@@ -712,5 +765,12 @@ void setupWebServer() {
 
 void handleWebServer() {
   server.handleClient();
-  if (lastStateTime > 0 && millis() - lastStateTime > 200) keyboard = {};
+  static unsigned long lastDrain = 0;
+  if (sseQueueCount > 0 && millis() - lastDrain >= 50) {
+    lastDrain = millis();
+    sseWrite(sseQueue[sseQueueHead]);
+    sseQueueHead = (sseQueueHead + 1) % SSE_QUEUE_SIZE;
+    sseQueueCount--;
+  }
+  if (lastStateTime > 0 && millis() - lastStateTime > 1000) keyboard = {};
 }
