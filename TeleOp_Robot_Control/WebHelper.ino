@@ -362,12 +362,14 @@ const char PAGE[] PROGMEM = R"rawliteral(
 
     function sendState() {
       const held = [...heldKeys].join(',');
-      fetch('/state?held=' + encodeURIComponent(held))
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 150);
+      fetch('/state?held=' + encodeURIComponent(held), { signal: ctrl.signal })
         .catch(() => {
           status.textContent = 'connection lost — refresh page';
           display.className  = '';
         })
-        .finally(() => setTimeout(sendState, 50));
+        .finally(() => { clearTimeout(t); setTimeout(sendState, 50); });
     }
     sendState();
 
@@ -711,7 +713,6 @@ static void sseWrite(String msg) {
       sseClients[i].print("data: ");
       sseClients[i].print(msg);
       sseClients[i].print("\r\n\r\n");
-      sseClients[i].flush();
     }
   }
 }
@@ -723,7 +724,6 @@ static void sseWritePlot(const char* label, float value) {
       sseClients[i].print("event: plot\r\ndata: ");
       sseClients[i].print(msg);
       sseClients[i].print("\r\n\r\n");
-      sseClients[i].flush();
     }
   }
 }
