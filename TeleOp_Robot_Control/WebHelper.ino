@@ -323,13 +323,16 @@ const char PAGE[] PROGMEM = R"rawliteral(
       if (heldKeys.size === 0) addLog('stop');
     });
 
-    setInterval(() => {
+    function sendState() {
       const held = [...heldKeys].join(',');
-      fetch('/state?held=' + encodeURIComponent(held)).catch(() => {
-        status.textContent = 'connection lost — refresh page';
-        display.className  = '';
-      });
-    }, 50);
+      fetch('/state?held=' + encodeURIComponent(held))
+        .catch(() => {
+          status.textContent = 'connection lost — refresh page';
+          display.className  = '';
+        })
+        .finally(() => setTimeout(sendState, 50));
+    }
+    sendState();
 
     // ── monitor ────────────────────────────────────────────────
     const monitor   = document.getElementById('monitor');
@@ -712,5 +715,5 @@ void setupWebServer() {
 
 void handleWebServer() {
   server.handleClient();
-  if (lastStateTime > 0 && millis() - lastStateTime > 200) keyboard = {};
+  if (lastStateTime > 0 && millis() - lastStateTime > 1000) keyboard = {};
 }
